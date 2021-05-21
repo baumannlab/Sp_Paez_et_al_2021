@@ -1,0 +1,442 @@
+---
+title: "Paez et al. 2021"
+output: 
+  html_document:
+   toc: yes
+   theme: "journal"
+   toc_float: true
+   code_folding: hide
+---
+
+```{r setup, include=FALSE}
+options(warn = -1)
+knitr::opts_chunk$set(echo = TRUE)
+library(pander)
+library(tidyverse)
+library(DESeq2) ##1.22.1
+library(MASS)
+library(DT)
+library(dplyr)
+library(readr)
+```
+
+```{r}
+print(sessionInfo())
+```
+
+```{r}
+meta = read.delim("metadata.txt")
+names = read.delim("s_pombe_sys_gene_names.tsv")
+```
+
+# PP138 v PP1847 (thc1 comparison)
+
+## Background
+
+Organism: *S. pombe*
+
+We are looking at the following sequencing files:
+
+`PP138` = WT
+
+`PP1847` = Deletion for SPCC18B5.09c / thc1
+
+Library prep kit: `Ribo-Zero® rRNA Removal Kit`
+
+## Trimming 
+
+```
+ml fastx_toolkit/0.0.14
+
+ls $DIR_RAW_FASTQS -1 | while read file; do echo $file; zcat $DIR_RAW_FASTQS/$file | fastx_clipper -a AGATCGGAAGAGCACACGTCTGAACTCCAGTCA -v -i - -o $DIR_RAW_FASTQS/${file%.fastq.gz}.trimmed.fastq > $DIR_RAW_FASTQS/${file%.fastq.gz}.trimmed_StdOut 2> $DIR_RAW_FASTQS/${file%.fastq.gz}.trimmed_StdErr; echo "Trimmed."; done
+```
+
+Post trimming statistics:
+
+```
+ls -1 *StdOut | while read file; do echo ${file%.R1.trimmed_StdOut} | cut -f 6 -d "_"; cat $file; echo " "; done
+
+PP138A
+Clipping Adapter: AGATCGGAAGAGCACACGTCTGAACTCCAGTCA
+Min. Length: 5
+Input: 42868440 reads.
+Output: 42408139 reads.
+discarded 383143 too-short reads.
+discarded 48903 adapter-only reads.
+discarded 28255 N reads.
+ 
+PP138B
+Clipping Adapter: AGATCGGAAGAGCACACGTCTGAACTCCAGTCA
+Min. Length: 5
+Input: 41534547 reads.
+Output: 41092478 reads.
+discarded 366297 too-short reads.
+discarded 47832 adapter-only reads.
+discarded 27940 N reads.
+ 
+PP138C
+Clipping Adapter: AGATCGGAAGAGCACACGTCTGAACTCCAGTCA
+Min. Length: 5
+Input: 42818232 reads.
+Output: 42364045 reads.
+discarded 376504 too-short reads.
+discarded 48773 adapter-only reads.
+discarded 28910 N reads.
+ 
+PP1847A
+Clipping Adapter: AGATCGGAAGAGCACACGTCTGAACTCCAGTCA
+Min. Length: 5
+Input: 40278518 reads.
+Output: 39854617 reads.
+discarded 350010 too-short reads.
+discarded 47187 adapter-only reads.
+discarded 26704 N reads.
+ 
+PP1847B
+Clipping Adapter: AGATCGGAAGAGCACACGTCTGAACTCCAGTCA
+Min. Length: 5
+Input: 41619033 reads.
+Output: 41175924 reads.
+discarded 365673 too-short reads.
+discarded 49859 adapter-only reads.
+discarded 27577 N reads.
+ 
+PP1847C
+Clipping Adapter: AGATCGGAAGAGCACACGTCTGAACTCCAGTCA
+Min. Length: 5
+Input: 42880759 reads.
+Output: 42426494 reads.
+discarded 372055 too-short reads.
+discarded 53449 adapter-only reads.
+discarded 28761 N reads.
+ 
+PP1860A
+Clipping Adapter: AGATCGGAAGAGCACACGTCTGAACTCCAGTCA
+Min. Length: 5
+Input: 39744994 reads.
+Output: 39318839 reads.
+discarded 350784 too-short reads.
+discarded 48928 adapter-only reads.
+discarded 26443 N reads.
+ 
+PP1860B
+Clipping Adapter: AGATCGGAAGAGCACACGTCTGAACTCCAGTCA
+Min. Length: 5
+Input: 46394935 reads.
+Output: 45895607 reads.
+discarded 410711 too-short reads.
+discarded 57523 adapter-only reads.
+discarded 31094 N reads.
+ 
+PP1860C
+Clipping Adapter: AGATCGGAAGAGCACACGTCTGAACTCCAGTCA
+Min. Length: 5
+Input: 42441840 reads.
+Output: 41977628 reads.
+discarded 385094 too-short reads.
+discarded 50747 adapter-only reads.
+discarded 28371 N reads.
+ 
+PP1861A
+Clipping Adapter: AGATCGGAAGAGCACACGTCTGAACTCCAGTCA
+Min. Length: 5
+Input: 39891158 reads.
+Output: 39469160 reads.
+discarded 347936 too-short reads.
+discarded 47372 adapter-only reads.
+discarded 26690 N reads.
+ 
+PP1861B
+Clipping Adapter: AGATCGGAAGAGCACACGTCTGAACTCCAGTCA
+Min. Length: 5
+Input: 38364722 reads.
+Output: 37961034 reads.
+discarded 333103 too-short reads.
+discarded 45178 adapter-only reads.
+discarded 25407 N reads.
+ 
+PP1861C
+Clipping Adapter: AGATCGGAAGAGCACACGTCTGAACTCCAGTCA
+Min. Length: 5
+Input: 40994947 reads.
+Output: 40557465 reads.
+discarded 361030 too-short reads.
+discarded 49083 adapter-only reads.
+discarded 27369 N reads.
+```
+
+## Alignment with STAR
+
+```
+ml star/2.5.2b_debian9
+
+time ls -1 *trimmed.fastq  | while read file
+do
+	echo $file
+	STAR --runMode alignReads \
+	--runThreadN 23 \
+	--genomeDir $STAR_GENOME_INDEX \
+	--readFilesIn $file \
+	--alignSJDBoverhangMin 5 \
+	--alignSJoverhangMin 10 \
+	--twopassMode Basic \
+	--alignIntronMin 20 \
+	--alignIntronMax 2500 \
+	--quantMode GeneCounts \
+	--alignEndsType EndToEnd \
+	--outBAMsortingThreadN 8 \
+	--outSAMunmapped Within \
+	--outSAMtype BAM SortedByCoordinate \
+	--outFileNamePrefix $OUTPUT/STAR.${file}.
+	echo "Done"
+done
+
+exit
+```
+
+### Uniquely mapped reads
+
+```
+ls -1 *final.out | while read file; do echo $file; cat $file | grep "Uniquely mapped reads %"; done
+
+STAR.imb_baumann_2019_01_01_PP138A_S1.R1.trimmed.fastq.Log.final.out
+                        Uniquely mapped reads % |	91.69%
+STAR.imb_baumann_2019_01_02_PP138B_S2.R1.trimmed.fastq.Log.final.out
+                        Uniquely mapped reads % |	92.06%
+STAR.imb_baumann_2019_01_03_PP138C_S3.R1.trimmed.fastq.Log.final.out
+                        Uniquely mapped reads % |	91.85%
+STAR.imb_baumann_2019_01_04_PP1847A_S4.R1.trimmed.fastq.Log.final.out
+                        Uniquely mapped reads % |	90.86%
+STAR.imb_baumann_2019_01_05_PP1847B_S5.R1.trimmed.fastq.Log.final.out
+                        Uniquely mapped reads % |	91.22%
+STAR.imb_baumann_2019_01_06_PP1847C_S6.R1.trimmed.fastq.Log.final.out
+                        Uniquely mapped reads % |	90.43%
+
+```
+
+## Differential expression
+
+```{r}
+counts = read.delim("thc1_comparison_counts.txt", header = TRUE, row.names = 1, sep="\t")
+
+rownames(meta) = substr(meta[,1], start = 24, stop = 35)
+
+meta = meta[1:6,]
+
+counts = counts[, c("PP138A",  "PP138B",  "PP138C",  "PP1847A", "PP1847B", "PP1847C")]
+
+#all(rownames(meta) == colnames(counts))
+
+meta$Genotype = factor(meta$Genotype)
+
+dds = DESeqDataSetFromMatrix(countData = counts, colData = meta, design = ~ Genotype)
+
+#ncol(counts) == nrow(meta)
+
+dds <- estimateSizeFactors(dds)
+dds
+idx <- rowSums( counts(dds, normalized=TRUE) >= 5 ) >= 3 #filter out genes where there are less than 3 samples with normalized counts greater than or equal to 5.
+dds <- dds[idx,]
+
+dds
+vsd <- vst(dds, blind=FALSE)   ### normalize
+plot <- plotPCA(vsd, intgroup=c("Genotype"), returnData=TRUE)
+percentVar <- round(100 * attr(plot, "percentVar"))
+
+```
+
+```{r}
+dds_full = DESeq(dds)
+
+dds_genotype = results(dds_full, contrast=c("Genotype", "PP1847", "PP138"))
+
+#dds_genotype
+
+#dds_genotype[order(-dds_genotype$log2FoldChange),]
+
+#summary(dds_genotype)
+
+#plotCounts(dds_full, gene=which.min(dds_genotype$padj), intgroup="Genotype")
+
+#write.table(dds_genotype[order(dds_genotype$log2FoldChange),], sep="\t", "PP138_v_PP1847.txt", quote=F)
+
+PP_138_v_PP1847 = read.delim("PP138_v_PP1847.txt")
+
+PP_138_v_PP1847_update = merge(PP_138_v_PP1847, names, all=F)
+row.names(PP_138_v_PP1847_update) = PP_138_v_PP1847_update[,1]
+PP_138_v_PP1847_update = PP_138_v_PP1847_update[,-1]
+```
+
+```{r}
+## read in the data from DESeq2
+thc1 = read.delim("PP138_v_PP1847.txt", row.names = 1)
+
+## set the colors of the points based on the following criteria
+thc1$colors <- ifelse(thc1$padj < 0.05 & abs(thc1$log2FoldChange) >= 1, "coral2", "black")
+
+ter1 <- subset(thc1["SPNCRNA.214",])
+snu6_thc1 = subset(thc1["SPSNRNA.06",])
+
+ggplot(thc1, aes(x=log2(baseMean), y=log2FoldChange)) + 
+  geom_point(color = thc1$colors) +
+  geom_point(data = ter1, colour="black", size = 3, fill = "red", shape = 21) +  # this adds a red point
+  geom_text(data = ter1, label="TER1", hjust=-0.1, fontface = "bold") + # this adds a label for the red point
+  geom_point(data = snu6_thc1, colour="black", size = 3, fill = "gray", shape = 21) +  
+  geom_text(data = snu6_thc1, label="SNU6", hjust=-0.1, vjust = 1.5, fontface = "bold", color = "coral2") +
+  geom_hline(yintercept = 1, linetype="solid", 
+             color = "lightblue", size=0.5) +
+  geom_hline(yintercept = -1, linetype="solid", 
+             color = "lightblue", size=0.5) +
+  geom_hline(yintercept = 0, linetype="solid", 
+             color = "blue", size=0.5) +
+  xlab(expression(Average~expression~(log[2]))) +
+  ylab(expression(log[2]~fold~change~italic((thc1Δ/thc1^"+")))) +
+  scale_y_continuous(limits=c(-5, 5), breaks = seq(-4, 4, by = 2)) +
+  theme_classic(base_size = 16) +
+  scale_x_continuous(limits=c(0, 20), breaks = seq(0, 20, by = 5)) 
+```
+
+# PP1860 v PP1861
+
+```{r}
+meta = read.delim("metadata.txt")
+```
+
+## Background
+
+Organism: *S. pombe*
+
+We are looking at the following sequencing files:
+
+`PP1860` = WT
+
+`PP1861` = Deletion for bmc1
+
+Library prep kit: `Ribo-Zero® rRNA Removal Kit`
+
+See FastQC reports: `/fsimb/groups/imb-baumanngr/sequencing/imb_baumann_2019_01_01_PP138A/fastqc`
+
+See code in the previous section
+
+## Alignment with STAR
+
+### Uniquely mapped reads
+
+```
+STAR.imb_baumann_2019_01_07_PP1860A_S7.R1.trimmed.fastq.Log.final.out
+                        Uniquely mapped reads % |	91.30%
+STAR.imb_baumann_2019_01_08_PP1860B_S8.R1.trimmed.fastq.Log.final.out
+                        Uniquely mapped reads % |	90.53%
+STAR.imb_baumann_2019_01_09_PP1860C_S9.R1.trimmed.fastq.Log.final.out
+                        Uniquely mapped reads % |	91.27%
+STAR.imb_baumann_2019_01_10_PP1861A_S10.R1.trimmed.fastq.Log.final.out
+                        Uniquely mapped reads % |	91.39%
+STAR.imb_baumann_2019_01_11_PP1861B_S11.R1.trimmed.fastq.Log.final.out
+                        Uniquely mapped reads % |	91.02%
+STAR.imb_baumann_2019_01_12_PP1861C_S12.R1.trimmed.fastq.Log.final.out
+                        Uniquely mapped reads % |	91.42%
+```
+
+## Differential expression
+
+```{r}
+counts = read.delim("bmc1_comparison_counts.txt", header = TRUE, row.names = 1, sep="\t")
+
+meta = meta[7:12,]
+
+rownames(meta) = substr(meta[,1], start = 24, stop = 35)
+
+counts = counts[, row.names(meta)]
+
+#all(rownames(meta) == colnames(counts))
+
+meta$Genotype = factor(meta$Genotype)
+
+dds = DESeqDataSetFromMatrix(countData = counts, colData = meta, design = ~ Genotype)
+
+#ncol(counts) == nrow(meta)
+
+dds <- estimateSizeFactors(dds)
+dds
+idx <- rowSums( counts(dds, normalized=TRUE) >= 5 ) >= 3 #filter out genes where there are less than 3 samples with normalized counts greater than or equal to 5.
+dds <- dds[idx,]
+
+dds
+```
+
+```{r}
+dds_full = DESeq(dds)
+
+dds_genotype = results(dds_full, contrast=c("Genotype", "PP1861", "PP1860"))
+
+#dds_genotype
+
+#dds_genotype[order(-dds_genotype$log2FoldChange),]
+
+#summary(dds_genotype)
+
+#plotCounts(dds_full, gene=which.min(dds_genotype$padj), intgroup="Genotype")
+
+#write.table(dds_genotype[order(dds_genotype$log2FoldChange),], sep="\t", "PP1861_v_PP1860.txt", quote=F)
+
+PP1861_v_PP1860 = read.delim("PP1861_v_PP1860.txt")
+
+PP1861_v_PP1860_update = merge(PP1861_v_PP1860, names, all=TRUE)
+row.names(PP1861_v_PP1860_update) = PP1861_v_PP1860_update[,1]
+PP1861_v_PP1860_update = PP1861_v_PP1860_update[,-1]
+```
+
+```{r}
+## read in the data from DESeq2
+bmc1 = read.delim("PP1861_v_PP1860.txt", row.names = 1)
+
+## set the colors of the points based on the following criteria
+bmc1$colors <- ifelse(bmc1$padj < 0.05 & abs(bmc1$log2FoldChange) >= 1, "coral2", "black")
+
+## subset out ter1 so we can easily label it later
+
+ter1_bmc1 = subset(bmc1["SPNCRNA.214",])
+snu6_bmc1 = subset(bmc1["SPSNRNA.06",])
+
+ggplot(bmc1, aes(x=log2(baseMean), y=log2FoldChange)) + 
+  geom_point(color = bmc1$colors) +
+  geom_point(data = ter1_bmc1, colour="black", size = 3, fill = "gray", shape = 21) +  
+  geom_text(data = ter1_bmc1, label="TER1", hjust=-0.2, fontface = "bold", color = "coral2") + 
+  geom_point(data = snu6_bmc1, colour="black", size = 3, fill = "gray", shape = 21) +  
+  geom_text(data = snu6_bmc1, label="SNU6", hjust=-0.1, vjust = 1.5, fontface = "bold", color = "coral2") + 
+  geom_hline(yintercept = 1, linetype="solid", 
+             color = "lightblue", size=0.5) +
+  geom_hline(yintercept = -1, linetype="solid", 
+             color = "lightblue", size=0.5) +
+  geom_hline(yintercept = 0, linetype="solid", 
+             color = "blue", size=0.5) +
+  xlab(expression(Average~expression~(log[2]))) +
+  ylab(expression(log[2]~fold~change~italic((bmc1/bmc1^"+")))) +
+  scale_y_continuous(limits=c(-5, 5), breaks = seq(-4, 4, by = 2)) +
+  theme_classic(base_size = 16) +
+  scale_x_continuous(limits=c(0, 20))
+```
+
+
+# Coverage plots
+
+```
+# make bigwig files
+bamCoverage -b STAR.imb_baumann_2019_01_01_PP138A_S1.R1.trimmed.fastq.Aligned.sortedByCoord.out.bam -o PP138A_01_binsize5.bw
+
+bamCoverage -b STAR.imb_baumann_2019_01_04_PP1847A_S4.R1.trimmed.fastq.Aligned.sortedByCoord.out.bam -o PP1847A_04_binsize5.bw
+
+bamCoverage -b STAR.imb_baumann_2019_01_07_PP1860A_S7.R1.trimmed.fastq.Aligned.sortedByCoord.out.bam -o PP1860A_07_binsize5.bw
+
+bamCoverage -b STAR.imb_baumann_2019_01_10_PP1861A_S10.R1.trimmed.fastq.Aligned.sortedByCoord.out.bam -o PP1861A_10_binsize5.bw
+
+#make track files
+make_tracks_file --trackFiles PP138A_01_binsize5.bw PP1847A_04_binsize5.bw -o thc1_del_tracks_2_files_binsize5.ini
+
+make_tracks_file --trackFiles PP1860A_07_binsize5.bw PP1861A_10_binsize5.bw -o thc1_del_tracks_2_files_binsize5.ini
+
+#generate coverage plots
+pyGenomeTracks --tracks thc1_del_tracks_2_files_binsize5.ini --region II:2962788-2966656 --outFileName thc1_del_Bin3_locus_2_files_binsize5.pdf
+
+pyGenomeTracks --tracks bmc1_del_tracks_2_files_binsize5.ini --region III:733336-739355 --outFileName bmc1_del_cpp8_locus_2_files_binsize5.pdf
+```
